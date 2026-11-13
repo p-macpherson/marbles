@@ -14,8 +14,10 @@ const ZONE_COLORS = {
   pegs: '#7bd389',
   helix: '#ff8fa3',
   pushers: '#66d9e8',
+  bumpers: '#ffd166',
+  gates: '#a0e7a0',
   final: '#f6f7f9',
-  runout: '#f6f7f9',
+  finish: '#f6f7f9',
 };
 
 export function marbleColor(i) {
@@ -51,6 +53,8 @@ export class RaceView {
     this._buildTrack();
     this._buildObstacles();
     this._buildLandmarks();
+    this._buildBucket();
+    this._buildWallSigns();
 
     this.marbles = [];
     this.labels = [];
@@ -292,7 +296,21 @@ export class RaceView {
     const c = this.course, scene = this.scene;
     const pegMat = new THREE.MeshStandardMaterial({ color: '#f2f5f8', roughness: 0.25, metalness: 0.6 });
     const hubMat = new THREE.MeshStandardMaterial({ color: '#40464f', roughness: 0.4, metalness: 0.7 });
+    const bumperMat = new THREE.MeshStandardMaterial({ color: '#ff4fa3', emissive: '#7a0f45', roughness: 0.3, metalness: 0.2 });
+    const bumperRing = new THREE.MeshStandardMaterial({ color: '#fff3b0', emissive: '#806a10', roughness: 0.3 });
     for (const cap of c.staticCapsules) {
+      if (cap.deco === 'bumper') {
+        // pinball bumper: cylinder body with a glowing cap ring
+        const h = Math.hypot(cap.b[0] - cap.a[0], cap.b[1] - cap.a[1], cap.b[2] - cap.a[2]);
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(cap.r, cap.r, h, 28), bumperMat);
+        this._placeCapsule(body, ...cap.a, ...cap.b);
+        body.castShadow = true;
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(cap.r, 0.14, 10, 32), bumperRing);
+        ring.position.set(cap.b[0], cap.b[1], cap.b[2]);
+        ring.quaternion.copy(body.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2));
+        scene.add(body, ring);
+        continue;
+      }
       scene.add(this._capsuleMesh(cap.a, cap.b, cap.r, cap.deco === 'hub' ? hubMat : pegMat));
     }
 
@@ -304,13 +322,32 @@ export class RaceView {
       rod: new THREE.MeshStandardMaterial({ color: '#b8c0c8', roughness: 0.3, metalness: 0.8 }),
       pusher: new THREE.MeshStandardMaterial({ color: '#f5a524', roughness: 0.35, metalness: 0.3 }),
       frame: new THREE.MeshStandardMaterial({ color: '#7c4dff', roughness: 0.5, metalness: 0.3 }),
+      slider: new THREE.MeshStandardMaterial({ color: '#2e9e5b', roughness: 0.45, metalness: 0.2 }),
+      stripe: new THREE.MeshStandardMaterial({ color: '#f4f4f4', roughness: 0.5 }),
     };
+    const basis = new THREE.Matrix4();
     this.partMeshes = [];
     for (const o of c.obstacles) {
       for (let k = 0; k < o.partCount; k++) {
         const q = this.parts[o.partStart + k];
         let mesh;
-        if (q.shape === 1) {
+        if (q.shape === 2) {
+          // sliding wall: box + a hazard stripe along the top
+          mesh = new THREE.Mesh(new THREE.BoxGeometry(q.h1 * 2, q.h2 * 2, q.h3 * 2), mats.slider);
+          const stripe = new THREE.Mesh(new THREE.BoxGeometry(q.h1 * 2 + 0.02, 0.18, q.h3 * 2 + 0.02), mats.stripe);
+          stripe.position.y = q.h2 - 0.2;
+          mesh.add(stripe);
+          this._addPortrait(mesh, q);
+          basis.makeBasis(
+            new THREE.Vector3(q.a1x, q.a1y, q.a1z),
+            new THREE.Vector3(q.a2x, q.a2y, q.a2z),
+            new THREE.Vector3(q.a3x, q.a3y, q.a3z)
+          );
+          mesh.quaternion.setFromRotationMatrix(basis);
+          mesh.position.set(q.x0, q.y0, q.z0);
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+        } else if (q.shape === 1) {
           mesh = new THREE.Mesh(new THREE.SphereGeometry(q.rad, 28, 18), mats.bob);
           mesh.castShadow = true;
         } else {
@@ -405,9 +442,128 @@ export class RaceView {
     const t = new THREE.Vector3(c.T[j * 3], c.T[j * 3 + 1], c.T[j * 3 + 2]);
     const r = new THREE.Vector3(c.RV[j * 3], c.RV[j * 3 + 1], c.RV[j * 3 + 2]);
     strip.position.set(c.P[j * 3], c.P[j * 3 + 1], c.P[j * 3 + 2]).addScaledVector(u, 0.02);
-    strip.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(r, t.clone().negate(), u));
+    strip.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(r, t, u));
     strip.receiveShadow = true;
     this.scene.add(strip);
+  }
+
+  /** Centre the Fantasy Man picture on both big faces of a sliding wall. */
+  _addPortrait(mesh, q) {
+    if (!this._portraitTex) {
+      this._portraitTex = new THREE.TextureLoader().load(new URL('../images/fantasyman.jpeg', import.meta.url).href);
+      this._portraitTex.colorSpace = THREE.SRGBColorSpace;
+      this._portraitTex.anisotropy = 4;
+    }
+    const aspect = 140 / 215; // source image is 140×215
+    const maxH = q.h2 * 2 - 0.5; // leave room for the stripe along the top
+    const maxW = q.h1 * 2 - 0.3;
+    let h = maxH, w = h * aspect;
+    if (w > maxW) { w = maxW; h = w / aspect; }
+    const geo = new THREE.PlaneGeometry(w, h);
+    const mat = new THREE.MeshStandardMaterial({ map: this._portraitTex, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -1 });
+    const frameMat = new THREE.MeshStandardMaterial({ color: '#f5c542', roughness: 0.4, metalness: 0.5 });
+    const frameGeo = new THREE.PlaneGeometry(w + 0.12, h + 0.12);
+    const cy = -0.12; // centred in the area below the stripe
+    for (const side of [1, -1]) {
+      const frame = new THREE.Mesh(frameGeo, frameMat);
+      const pic = new THREE.Mesh(geo, mat);
+      frame.position.set(0, cy, side * (q.h3 + 0.01));
+      pic.position.set(0, cy, side * (q.h3 + 0.02));
+      if (side < 0) frame.rotation.y = pic.rotation.y = Math.PI;
+      mesh.add(frame, pic);
+    }
+  }
+
+  /** "FANTASY MAN" painted on the inside of the side walls every so often. */
+  _buildWallSigns() {
+    const c = this.course;
+    const cv = document.createElement('canvas');
+    cv.width = 1024; cv.height = 160;
+    const g = cv.getContext('2d');
+    g.font = '900 118px Impact, "Arial Black", system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const grad = g.createLinearGradient(0, 20, 0, 140);
+    grad.addColorStop(0, '#ff4fd8');
+    grad.addColorStop(1, '#7c4dff');
+    g.lineWidth = 12;
+    g.strokeStyle = '#1a0b2e';
+    g.strokeText('FANTASY MAN', 512, 84);
+    g.fillStyle = grad;
+    g.fillText('FANTASY MAN', 512, 84);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+
+    const SPACING = 38;
+    let next = 30, side = 1;
+    for (let j = 0; j < c.sampleCount; j++) {
+      if (c.S[j] < next || j >= c.finishIndex - 4) continue;
+      const seg = c.segments[c.sampleSeg[j]];
+      if (seg.type !== 'straight') continue; // flat signs only look right on straight walls
+      next = c.S[j] + SPACING;
+      side = -side;
+      const wh = c.WH[j];
+      const h = Math.min(1.1, wh * 0.5);
+      const w = h * (1024 / 160);
+      const p = new THREE.Vector3(c.P[j * 3], c.P[j * 3 + 1], c.P[j * 3 + 2]);
+      const r = new THREE.Vector3(c.RV[j * 3], c.RV[j * 3 + 1], c.RV[j * 3 + 2]);
+      const u = new THREE.Vector3(c.U[j * 3], c.U[j * 3 + 1], c.U[j * 3 + 2]);
+      const t = new THREE.Vector3(c.T[j * 3], c.T[j * 3 + 1], c.T[j * 3 + 2]);
+      // facing into the track; x = up × normal keeps the basis right-handed so the
+      // text reads left→right for someone on the track looking at the wall
+      const n = r.clone().multiplyScalar(-side); // inward normal
+      const x = new THREE.Vector3().crossVectors(u, n);
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+      sign.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, u, n));
+      sign.position.copy(p).addScaledVector(r, side * (c.HW[j] - 0.04)).addScaledVector(u, wh * 0.55);
+      sign.renderOrder = 3;
+      this.scene.add(sign);
+    }
+  }
+
+  _buildBucket() {
+    const b = this.course.bucket;
+    if (!b) return;
+    const g = new THREE.Group();
+    g.position.set(b.c[0], b.c[1], b.c[2]);
+    // stripes painted on the inside so marbles are easy to see
+    const cv = document.createElement('canvas');
+    cv.width = 512; cv.height = 64;
+    const x = cv.getContext('2d');
+    for (let i = 0; i < 16; i++) {
+      x.fillStyle = i % 2 ? '#ffffff' : '#e5484d';
+      x.fillRect(i * 32, 0, 32, 64);
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const wall = new THREE.Mesh(
+      new THREE.CylinderGeometry(b.r + 0.05, b.r + 0.05, b.h, b.sides * 2, 1, true),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, side: THREE.DoubleSide })
+    );
+    wall.position.y = b.h / 2;
+    wall.castShadow = true;
+    wall.receiveShadow = true;
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(b.r, b.sides), new THREE.MeshStandardMaterial({ color: '#3a4250', roughness: 0.8 }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0.01;
+    floor.receiveShadow = true;
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(b.r, 0.18, 10, 64), new THREE.MeshStandardMaterial({ color: '#f5c542', metalness: 0.6, roughness: 0.3 }));
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = b.h;
+    g.add(wall, floor, rim);
+    // legs down to the ground
+    const legMat = new THREE.MeshStandardMaterial({ color: '#9aa7b4', roughness: 0.6, metalness: 0.4 });
+    const legH = b.c[1] - this.groundY;
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, legH, 10), legMat);
+      leg.position.set(Math.cos(a) * b.r * 0.7, -legH / 2, Math.sin(a) * b.r * 0.7);
+      leg.castShadow = true;
+      g.add(leg);
+    }
+    this.scene.add(g);
   }
 
   // ---------------------------------------------------------------- marbles
@@ -489,7 +645,7 @@ export class RaceView {
     evaluateObstacles(c, race.stepCount === 0 ? 0 : t, this.parts);
     for (let k = 0; k < this.parts.length; k++) {
       const q = this.parts[k], mesh = this.partMeshes[k];
-      if (q.shape === 1) mesh.position.set(q.x0, q.y0, q.z0);
+      if (q.shape >= 1) mesh.position.set(q.x0, q.y0, q.z0);
       else this._placeCapsule(mesh, q.x0, q.y0, q.z0, q.x1, q.y1, q.z1);
     }
 
@@ -516,7 +672,7 @@ export class RaceView {
 
     // camera
     const fm = this.marbles[this.focus];
-    if (fm) this.rig.update(dt, fm.position, race.sampleIdx[this.focus]);
+    if (fm) this.rig.update(dt, fm.position, race.sampleIdx[this.focus], race.finishStep[this.focus] >= 0 && fm.position.y < this.course.finishY - 2);
 
     // keep the shadow camera around what we are looking at
     const tgt = this.rig.target;

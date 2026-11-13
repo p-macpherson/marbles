@@ -6,6 +6,7 @@
 
 import { getCourse, createPartBuffer, evaluateObstacles, MARBLE_R } from './track.js';
 import { Rng } from './rng.js';
+import { dsin, dcos } from './dmath.js';
 
 export const STEPS_PER_SEC = 240;
 export const DT = 1 / STEPS_PER_SEC;
@@ -21,6 +22,7 @@ const E_MARBLE = 0.55;
 const E_STATIC = 0.3;
 const E_KIN = 0.6;
 const E_PEG = 0.2;
+const E_WALL = 0.15; // sliding walls: marbles stop at the face rather than bouncing away
 const BOUNCE_MIN = 0.9; // below this normal speed collisions are perfectly inelastic
 const MU = 0.15;
 const DRAG = 0.006; // quadratic air drag
@@ -99,6 +101,7 @@ export class Race {
     this.finishStep = new Int32Array(n).fill(-1);
     this.finishOrder = [];
     this.respawns = new Int32Array(n);
+    this.bucketRescues = 0;
     this.stepCount = 0;
     this.completeStep = -1;
     this.parts = createPartBuffer(course);
@@ -204,10 +207,13 @@ export class Race {
   }
 
   _collideMarbles() {
-    const n = this.n, p = this.pos, v = this.vel;
+    const n = this.n, p = this.pos, v = this.vel, fin = this.finishStep;
     for (let i = 0; i < n; i++) {
       const oi = i * 3;
+      const fi = fin[i] >= 0;
       for (let j = i + 1; j < n; j++) {
+        // finished marbles only collide with each other (in the bucket)
+        if (fi !== fin[j] >= 0) continue;
         const oj = j * 3;
         let dx = p[oj] - p[oi];
         if (dx > D || dx < -D) continue;
@@ -268,7 +274,16 @@ export class Race {
           const d2 = dx * dx + dy * dy + dz * dz;
           if (d2 >= rr * rr || d2 < 1e-18) continue;
           const dist = Math.sqrt(d2);
-          this._resolve(i, dx / dist, dy / dist, dz / dist, rr - dist, 0, 0, 0, E_PEG);
+          const nx = dx / dist, ny = dy / dist, nz = dz / dist;
+          this._resolve(i, nx, ny, nz, rr - dist, 0, 0, 0, E_PEG);
+          if (cap.kick) {
+            // pinball bumper: guarantee an outward speed of at least `kick`
+            const v = this.vel, vn = v[o] * nx + v[o + 1] * ny + v[o + 2] * nz;
+            if (vn < cap.kick) {
+              const k = cap.kick - vn;
+              v[o] += nx * k; v[o + 1] += ny * k; v[o + 2] += nz * k;
+            }
+          }
         }
       }
     }
@@ -285,21 +300,58 @@ export class Race {
         const px = p[o], py = p[o + 1], pz = p[o + 2];
         const bx = px - q.bx, by = py - q.by, bz = pz - q.bz;
         if (bx * bx + by * by + bz * bz >= lim * lim) continue;
-        if (q.shape === 1) { CX = q.x0; CY = q.y0; CZ = q.z0; }
-        else closestOnSeg(px, py, pz, q.x0, q.y0, q.z0, q.x1, q.y1, q.z1);
-        const rr = q.rad + R;
-        const dx = px - CX, dy = py - CY, dz = pz - CZ;
-        const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 >= rr * rr || d2 < 1e-18) continue;
-        const dist = Math.sqrt(d2);
-        const nx = dx / dist, ny = dy / dist, nz = dz / dist;
+        let nx, ny, nz, pen;
+        if (q.shape === 2) {
+          // oriented box
+          const rx = px - q.x0, ry = py - q.y0, rz = pz - q.z0;
+          const d1 = rx * q.a1x + ry * q.a1y + rz * q.a1z;
+          const d2 = rx * q.a2x + ry * q.a2y + rz * q.a2z;
+          const d3 = rx * q.a3x + ry * q.a3y + rz * q.a3z;
+          const c1 = d1 < -q.h1 ? -q.h1 : d1 > q.h1 ? q.h1 : d1;
+          const c2 = d2 < -q.h2 ? -q.h2 : d2 > q.h2 ? q.h2 : d2;
+          const c3 = d3 < -q.h3 ? -q.h3 : d3 > q.h3 ? q.h3 : d3;
+          if (c1 === d1 && c2 === d2 && c3 === d3) {
+            // centre inside the box (squeezed): pop out through the nearest face
+            const p1 = q.h1 - (d1 < 0 ? -d1 : d1);
+            const p2 = q.h2 - (d2 < 0 ? -d2 : d2);
+            const p3 = q.h3 - (d3 < 0 ? -d3 : d3);
+            if (p3 <= p1 && p3 <= p2) {
+              const s = d3 < 0 ? -1 : 1;
+              nx = q.a3x * s; ny = q.a3y * s; nz = q.a3z * s; pen = p3 + R;
+            } else if (p1 <= p2) {
+              const s = d1 < 0 ? -1 : 1;
+              nx = q.a1x * s; ny = q.a1y * s; nz = q.a1z * s; pen = p1 + R;
+            } else {
+              const s = d2 < 0 ? -1 : 1;
+              nx = q.a2x * s; ny = q.a2y * s; nz = q.a2z * s; pen = p2 + R;
+            }
+          } else {
+            const cx = q.x0 + q.a1x * c1 + q.a2x * c2 + q.a3x * c3;
+            const cy = q.y0 + q.a1y * c1 + q.a2y * c2 + q.a3y * c3;
+            const cz = q.z0 + q.a1z * c1 + q.a2z * c2 + q.a3z * c3;
+            const dx = px - cx, dy = py - cy, dz = pz - cz;
+            const dd = dx * dx + dy * dy + dz * dz;
+            if (dd >= R * R || dd < 1e-18) continue;
+            const dist = Math.sqrt(dd);
+            nx = dx / dist; ny = dy / dist; nz = dz / dist; pen = R - dist;
+          }
+        } else {
+          if (q.shape === 1) { CX = q.x0; CY = q.y0; CZ = q.z0; }
+          else closestOnSeg(px, py, pz, q.x0, q.y0, q.z0, q.x1, q.y1, q.z1);
+          const rr = q.rad + R;
+          const dx = px - CX, dy = py - CY, dz = pz - CZ;
+          const d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 >= rr * rr || d2 < 1e-18) continue;
+          const dist = Math.sqrt(d2);
+          nx = dx / dist; ny = dy / dist; nz = dz / dist; pen = rr - dist;
+        }
         // surface velocity at contact point: v + w x (c - origin)
         const cpx = px - nx * R, cpy = py - ny * R, cpz = pz - nz * R;
         const rx = cpx - q.ox, ry = cpy - q.oy, rz = cpz - q.oz;
         const svx = q.vx + q.wy * rz - q.wz * ry;
         const svy = q.vy + q.wz * rx - q.wx * rz;
         const svz = q.vz + q.wx * ry - q.wy * rx;
-        this._resolve(i, nx, ny, nz, rr - dist, svx, svy, svz, E_KIN);
+        this._resolve(i, nx, ny, nz, pen, svx, svy, svz, q.shape === 2 ? E_WALL : E_KIN);
       }
     }
   }
@@ -328,7 +380,19 @@ export class Race {
       const prog = c.S[bestJ] + along;
       this.progress[i] = prog;
 
-      if (this.finishStep[i] >= 0) continue;
+      if (this.finishStep[i] >= 0) {
+        const b = c.bucket;
+        if (b && py < b.c[1] - 4) {
+          // bounced out of the bucket: drop it back in (purely cosmetic)
+          const a = i * 2.399963229728653; // golden angle spiral, deterministic
+          const rr = (b.r - 1) * Math.sqrt(((i % 12) + 0.5) / 12);
+          const sa = dsin(a), ca = dcos(a);
+          p[o] = b.c[0] + ca * rr; p[o + 1] = b.c[1] + b.h; p[o + 2] = b.c[2] + sa * rr;
+          this.vel[o] = this.vel[o + 1] = this.vel[o + 2] = 0;
+          this.bucketRescues++;
+        }
+        continue;
+      }
 
       if (prog >= c.finishS) {
         this.finishStep[i] = step;

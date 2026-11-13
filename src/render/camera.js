@@ -1,13 +1,16 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
+const DEG = Math.PI / 180;
+const MIN_ZOOM = 0.35;
+const MAX_ZOOM = 3.5;
 
 /**
  * Camera behaviour:
  *  - 'overview': static shot of the start area (pre-race)
- *  - 'chase':    sits behind the followed marble, looking down the track
- *  - 'orbit':    user drags / pinches to look around the followed marble
+ *  - 'follow':   orbits the followed marble at a fixed elevation angle. The
+ *                heading follows the track direction; the user can add a yaw
+ *                offset (drag / swipe) and zoom (wheel / pinch).
  */
 export class CameraRig {
   constructor(camera, dom, course) {
@@ -16,31 +19,95 @@ export class CameraRig {
     this.mode = 'overview';
     this.target = new THREE.Vector3();
     this.dir = new THREE.Vector3(1, 0, 0);
+    this.yawOffset = 0;
+    this.zoom = 1;
+    this.blend = 1; // 0..1 transition from overview into follow
+    this.bucketLook = 0; // 0..1, raises the angle to look down into the finish bucket
+    this.onUserChange = null;
+    this._from = new THREE.Vector3();
     this._desired = new THREE.Vector3();
     this._look = new THREE.Vector3();
     this._t = new THREE.Vector3();
-    this.controls = new OrbitControls(camera, dom);
-    this.controls.enabled = false;
-    this.controls.enableDamping = true;
-    this.controls.enablePan = false;
-    this.controls.minDistance = 2.5;
-    this.controls.maxDistance = 80;
-    this.controls.maxPolarAngle = Math.PI * 0.9;
+    this._bindInput(dom);
+  }
+
+  get adjusted() {
+    return Math.abs(this.yawOffset) > 0.01 || Math.abs(this.zoom - 1) > 0.01;
+  }
+
+  resetView() {
+    this.yawOffset = 0;
+    this.zoom = 1;
+    this.onUserChange?.();
   }
 
   setMode(mode) {
     if (mode === this.mode) return;
-    this.mode = mode;
-    this.controls.enabled = mode === 'orbit';
-    if (mode === 'orbit') {
-      this.controls.target.copy(this.target);
-      this.controls.update();
+    if (this.mode === 'overview' && mode === 'follow') {
+      this._from.copy(this.camera.position);
+      this.blend = 0;
     }
+    this.mode = mode;
+  }
+
+  _bindInput(dom) {
+    const pointers = new Map();
+    let pinchDist = 0;
+    const pinchSpan = () => {
+      const [a, b] = [...pointers.values()];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+    const changed = () => this.onUserChange?.();
+
+    dom.addEventListener('pointerdown', (e) => {
+      if (this.mode !== 'follow') return;
+      try {
+        dom.setPointerCapture(e.pointerId);
+      } catch {}
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) pinchDist = pinchSpan();
+    });
+    dom.addEventListener('pointermove', (e) => {
+      const p = pointers.get(e.pointerId);
+      if (!p) return;
+      const dx = e.clientX - p.x;
+      p.x = e.clientX;
+      p.y = e.clientY;
+      if (pointers.size === 1) {
+        // drag right → scene turns right (camera swings around the marble)
+        this.yawOffset -= (dx / Math.max(300, dom.clientWidth)) * Math.PI * 1.6;
+        changed();
+      } else if (pointers.size === 2) {
+        const d = pinchSpan();
+        if (pinchDist > 0 && d > 0) {
+          this.zoom = THREE.MathUtils.clamp((this.zoom * pinchDist) / d, MIN_ZOOM, MAX_ZOOM);
+          changed();
+        }
+        pinchDist = d;
+      }
+    });
+    const end = (e) => {
+      pointers.delete(e.pointerId);
+      pinchDist = pointers.size === 2 ? pinchSpan() : 0;
+    };
+    dom.addEventListener('pointerup', end);
+    dom.addEventListener('pointercancel', end);
+    dom.addEventListener(
+      'wheel',
+      (e) => {
+        if (this.mode !== 'follow') return;
+        e.preventDefault();
+        const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
+        this.zoom = THREE.MathUtils.clamp(this.zoom * Math.exp(dy * 0.0015), MIN_ZOOM, MAX_ZOOM);
+        changed();
+      },
+      { passive: false }
+    );
+    dom.addEventListener('dblclick', () => this.resetView());
   }
 
   overview(course) {
     this.mode = 'overview';
-    this.controls.enabled = false;
     const j = Math.round((course.spawn.j0 + course.spawn.j1) / 2);
     const p = new THREE.Vector3(course.P[j * 3], course.P[j * 3 + 1], course.P[j * 3 + 2]);
     const t = new THREE.Vector3(course.T[j * 3], 0, course.T[j * 3 + 2]).normalize();
@@ -56,29 +123,34 @@ export class CameraRig {
     this.camera.lookAt(this.target);
   }
 
-  update(dt, pos, sampleIdx) {
+  update(dt, pos, sampleIdx, inBucket = false) {
     if (this.mode === 'overview') return;
     const c = this.course;
-    const kTarget = 1 - Math.exp(-dt * 10);
-    this.target.lerp(pos, kTarget);
+    this.target.lerp(pos, 1 - Math.exp(-dt * 10));
 
-    if (this.mode === 'chase') {
-      const j = sampleIdx * 3;
-      this._t.set(c.T[j], 0, c.T[j + 2]).normalize();
-      this.dir.lerp(this._t, 1 - Math.exp(-dt * 2.5)).normalize();
-      const portrait = this.camera.aspect < 1;
-      const dist = portrait ? 9 : 8.5;
-      const height = portrait ? 7.5 : 5;
-      this._desired.copy(this.target).addScaledVector(this.dir, -dist).addScaledVector(UP, height);
-      this.camera.position.lerp(this._desired, 1 - Math.exp(-dt * 4));
-      this._look.copy(this.target).addScaledVector(this.dir, 3.5);
-      this.camera.lookAt(this._look);
-    } else if (this.mode === 'orbit') {
-      const ctl = this.controls;
-      this._t.copy(this.target).sub(ctl.target);
-      this.camera.position.add(this._t);
-      ctl.target.copy(this.target);
-      ctl.update();
+    const j = sampleIdx * 3;
+    this._t.set(c.T[j], 0, c.T[j + 2]).normalize();
+    this.dir.lerp(this._t, 1 - Math.exp(-dt * 2.5)).normalize();
+
+    const portrait = this.camera.aspect < 1;
+    // fixed elevation while racing; steeper once the marble is in the bucket so the rim doesn't hide it
+    this.bucketLook += ((inBucket ? 1 : 0) - this.bucketLook) * (1 - Math.exp(-dt * 2));
+    const elev = ((portrait ? 46 : 40) + this.bucketLook * 30) * DEG;
+    const dist = (portrait ? 12.5 : 11) * this.zoom;
+    const yaw = Math.atan2(this.dir.z, this.dir.x) + this.yawOffset;
+    const fx = Math.cos(yaw), fz = Math.sin(yaw);
+    const horiz = dist * Math.cos(elev);
+    this._desired.set(this.target.x - fx * horiz, this.target.y + dist * Math.sin(elev), this.target.z - fz * horiz);
+
+    if (this.blend < 1) {
+      this.blend = Math.min(1, this.blend + dt / 1.4);
+      const e = this.blend * this.blend * (3 - 2 * this.blend);
+      this.camera.position.lerpVectors(this._from, this._desired, e);
+    } else {
+      this.camera.position.copy(this._desired);
     }
+    // look slightly past the marble so more of the track ahead is visible
+    this._look.set(this.target.x + fx * 1.5, this.target.y, this.target.z + fz * 1.5);
+    this.camera.lookAt(this._look);
   }
 }

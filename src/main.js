@@ -2,6 +2,9 @@ import { Race, DT, MIN_MARBLES, MAX_MARBLES } from './sim/race.js';
 import { getCourse } from './sim/track.js';
 import { RaceView, marbleCss } from './render/view.js';
 import { decodeRace, shareUrl, MAX_NAME_LEN } from './share.js';
+import { Music } from './audio/music.js';
+
+const music = new Music();
 
 const $ = (id) => document.getElementById(id);
 const isSmall = () => Math.min(window.innerWidth, window.innerHeight) < 600 || window.innerWidth < 640;
@@ -25,7 +28,7 @@ const app = {
   speed: 1,
   follow: 0,
   leader: true,
-  camMode: 'chase',
+  hintShown: false,
   acc: 0,
   countdown: 0,
   standingsOpen: !isSmall(),
@@ -113,6 +116,8 @@ function loadRace(config) {
 }
 
 function startCountdown() {
+  music.unlock(); // always called from a click/tap, so audio is allowed
+  music.stop(0.3);
   app.phase = 'countdown';
   app.countdown = 3;
   show('hud', true);
@@ -126,6 +131,7 @@ function setCountdownText(t) {
   const el = $('countdown');
   if (el.textContent === t) return;
   el.textContent = t;
+  if (app.phase === 'countdown' || t === 'GO!') music.beep(t === 'GO!');
   el.classList.remove('pop');
   void el.offsetWidth; // restart animation
   el.classList.add('pop');
@@ -133,7 +139,12 @@ function setCountdownText(t) {
 
 function beginRace() {
   app.phase = 'racing';
-  view.rig.setMode(app.camMode);
+  view.rig.setMode('follow');
+  music.start();
+  if (!app.hintShown) {
+    app.hintShown = true;
+    setTimeout(() => toast(isSmall() ? 'Swipe to turn the camera · pinch to zoom' : 'Drag to turn the camera · scroll to zoom'), 1200);
+  }
   setCountdownText('GO!');
   setTimeout(() => {
     if (app.phase !== 'countdown') show('countdown', false);
@@ -141,14 +152,15 @@ function beginRace() {
 }
 
 function replay() {
-  show('results', false);
+  closeResults();
   app.replaying = true;
   loadRace(app.config);
   startCountdown();
 }
 
 function newRace() {
-  show('results', false);
+  music.stop(0.3);
+  closeResults();
   show('hud', false);
   show('countdown', false);
   app.phase = 'idle';
@@ -221,7 +233,7 @@ function updateHud(force = false) {
   const f = app.follow;
   $('cam-name').innerHTML = `${dot(f)}<span class="txt">${escapeHtml(race.names[f])}</span><span class="place">P${place.get(f)}/${race.n}</span>`;
   $('cam-leader').classList.toggle('on', app.leader);
-  $('cam-view').querySelector('.long').textContent = app.camMode === 'chase' ? ' Chase cam' : ' Free cam';
+  $('cam-reset').hidden = !view.rig.adjusted;
   $('btn-speed').textContent = app.speed + '×';
 
   const list = $('standings');
@@ -264,7 +276,23 @@ function showResults() {
   show('res-new', !viewer);
   show('results', true);
   show('btn-results', true);
+  music.stop(0.3);
+  scheduleRedirect();
   app.resultsShown = true;
+}
+
+// end of race: go to the video 6 s after the results appear, unless the user
+// picks another action (replay / new race / back to track) first
+const END_URL = 'https://www.youtube.com/watch?v=flXwv-FxFbs';
+const REDIRECT_DELAY = 6000;
+let redirectTimer = 0;
+function scheduleRedirect() {
+  clearTimeout(redirectTimer);
+  redirectTimer = setTimeout(() => location.assign(END_URL), REDIRECT_DELAY);
+}
+function closeResults() {
+  clearTimeout(redirectTimer);
+  show('results', false);
 }
 
 // --------------------------------------------------------------------------
@@ -427,22 +455,35 @@ function wire() {
     updateHud(true);
   });
   $('btn-share').addEventListener('click', openShare);
+  const syncMute = (muted) => {
+    const b = $('btn-mute');
+    b.textContent = muted ? '🔇' : '🔊';
+    b.title = (muted ? 'Unmute' : 'Mute') + ' music (M)';
+    b.setAttribute('aria-label', muted ? 'Unmute music' : 'Mute music');
+    b.setAttribute('aria-pressed', String(muted));
+    b.classList.toggle('muted', muted);
+  };
+  music.onChange = syncMute;
+  syncMute(music.muted);
+  $('btn-mute').addEventListener('click', () => {
+    music.unlock();
+    music.toggleMute();
+  });
   $('btn-standings').addEventListener('click', () => toggleStandings());
   $('btn-results').addEventListener('click', showResults);
   $('cam-prev').addEventListener('click', () => cycleFollow(-1));
   $('cam-next').addEventListener('click', () => cycleFollow(1));
   $('cam-leader').addEventListener('click', () => setLeaderMode(!app.leader));
   $('cam-name').addEventListener('click', () => openPicker(applyPick, 'Follow which marble?'));
-  $('cam-view').addEventListener('click', () => {
-    app.camMode = app.camMode === 'chase' ? 'orbit' : 'chase';
-    if (app.phase === 'racing' || app.phase === 'done') view.rig.setMode(app.camMode);
-    toast(app.camMode === 'orbit' ? 'Free cam: drag to look around, pinch/scroll to zoom' : 'Chase cam');
-    updateHud(true);
-  });
+  $('cam-reset').addEventListener('click', () => view.rig.resetView());
+  view.rig.onUserChange = () => {
+    const hide = !view.rig.adjusted;
+    if ($('cam-reset').hidden !== hide) $('cam-reset').hidden = hide;
+  };
   $('res-replay').addEventListener('click', replay);
   $('res-share').addEventListener('click', openShare);
   $('res-new').addEventListener('click', newRace);
-  $('res-close').addEventListener('click', () => show('results', false));
+  $('res-close').addEventListener('click', closeResults);
   $('share-copy').addEventListener('click', copyShare);
   $('share-url').addEventListener('focus', (e) => e.target.select());
   $('share-close').addEventListener('click', () => show('share', false));
@@ -452,7 +493,9 @@ function wire() {
   for (const id of ['share', 'pick', 'results']) {
     $(id).addEventListener('click', (e) => {
       // click on the dimmed backdrop closes (except the viewer's first pick)
-      if (e.target.id === id && !(id === 'pick' && app.phase === 'idle')) show(id, false);
+      if (e.target.id !== id || (id === 'pick' && app.phase === 'idle')) return;
+      if (id === 'results') closeResults();
+      else show(id, false);
     });
   }
 
@@ -461,8 +504,12 @@ function wire() {
     if (e.key === 'ArrowRight') cycleFollow(1);
     else if (e.key === 'ArrowLeft') cycleFollow(-1);
     else if (e.key === 'l' || e.key === 'L') setLeaderMode(!app.leader);
-    else if (e.key === 'c' || e.key === 'C') $('cam-view').click();
-    else if (e.key === 'Escape') ['share', 'results'].forEach((id) => show(id, false));
+    else if (e.key === 'r' || e.key === 'R') view.rig.resetView();
+    else if (e.key === 'm' || e.key === 'M') music.toggleMute();
+    else if (e.key === 'Escape') {
+      show('share', false);
+      closeResults();
+    }
   });
 }
 
@@ -491,6 +538,7 @@ function frame(now) {
       if (steps >= maxSteps) app.acc = 0; // device can't keep up: slow down rather than spiral
       if (app.phase === 'racing' && race.complete) {
         app.phase = 'done';
+        music.stop(2);
         app.resultsTimer = 2.5;
       }
       if (app.phase === 'done' && !app.resultsShown) {

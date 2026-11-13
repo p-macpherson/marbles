@@ -5,7 +5,7 @@
 import { dsin, dcos, TWO_PI } from './dmath.js';
 
 export const MARBLE_R = 0.5;
-export const COURSE_VERSION = 1;
+export const COURSE_VERSION = 3;
 
 const SPACING = 0.75; // centreline sample spacing (horizontal units)
 const DEG = 0.017453292519943295;
@@ -18,23 +18,20 @@ const GRID_CELL = 3;
  * wall = wall height, bank = banking in degrees for turns
  */
 const SEGMENTS = [
+  // --- calm start ---
   { zone: 'start', type: 'straight', len: 22, drop: 3.5, w: [7, 3], wall: 2.6, startCap: true },
   { type: 'straight', len: 22, drop: 3.2, w: 3, wall: 2.2 },
   { type: 'turn', radius: 10, angle: 90, drop: 2.5, w: 3, wall: 3, bank: 12 },
-  { type: 'straight', len: 16, drop: 2.2, w: 3, wall: 2.2 },
-  { type: 'turn', radius: 9, angle: -180, drop: 4, w: 3, wall: 3, bank: 12 },
-  { type: 'straight', len: 10, drop: 1.2, w: [3, 5], wall: 2.2 },
+  { type: 'straight', len: 8, drop: 1, w: [3, 5], wall: 2.2 },
   {
-    zone: 'spinners', type: 'straight', len: 50, drop: 6.5, w: 5, wall: 2.2,
-    obstacles: [
-      { kind: 'spinner', at: 0.17, arms: 2, len: 3.2, omega: 1.4, phase: 0 },
-      { kind: 'spinner', at: 0.5, arms: 2, len: 3.2, omega: -1.1, phase: 0.6 },
-      { kind: 'spinner', at: 0.83, arms: 2, len: 3.2, omega: 1.7, phase: 1.3 },
-    ],
+    // 1. pinball bumpers (cylinders)
+    zone: 'bumpers', type: 'straight', len: 30, drop: 6, w: 5, wall: 2.4,
+    obstacles: [{ kind: 'bumpers', at: [[0.18, -2.2], [0.18, 2.2], [0.45, 0], [0.72, -2.5], [0.72, 2.5], [0.92, 0]] }],
   },
-  { type: 'straight', len: 8, drop: 1, w: [5, 3.5], wall: 2.2 },
-  { type: 'turn', radius: 10, angle: 180, drop: 4, w: 3.5, wall: 3, bank: 12 },
+  { type: 'straight', len: 6, drop: 0.8, w: [5, 3.5], wall: 2.2 },
+  { type: 'turn', radius: 9, angle: -180, drop: 4, w: 3.5, wall: 3, bank: 12 },
   {
+    // 2. pendulums
     zone: 'pendulums', type: 'straight', len: 46, drop: 6, w: 3.5, wall: 2.2,
     obstacles: [
       { kind: 'pendulum', at: 0.15, amp: 0.42, period: 2.6, phase: 0 },
@@ -43,16 +40,9 @@ const SEGMENTS = [
       { kind: 'pendulum', at: 0.85, amp: 0.42, period: 2.1, phase: 5.1 },
     ],
   },
-  { type: 'turn', radius: 12, angle: -90, drop: 3, w: 3.5, wall: 3, bank: 10 },
-  { type: 'straight', len: 8, drop: 1, w: [3.5, 6], wall: 2.2 },
+  { type: 'turn', radius: 10, angle: 180, drop: 4, w: [3.5, 4], wall: 3, bank: 12 },
   {
-    zone: 'pegs', type: 'straight', len: 36, drop: 5.5, w: 6, wall: 2.2,
-    obstacles: [{ kind: 'pegs', from: 3, to: 33, rowGap: 4 }],
-  },
-  { type: 'straight', len: 8, drop: 1, w: [6, 3], wall: 2.2 },
-  { zone: 'helix', type: 'turn', radius: 9, angle: 720, drop: 22, w: 3, wall: 3.2, bank: 16 },
-  { type: 'straight', len: 12, drop: 1.5, w: [3, 4], wall: 2.2 },
-  {
+    // 3. sliding pushers (sausages)
     zone: 'pushers', type: 'straight', len: 38, drop: 5, w: 4, wall: 2.2,
     obstacles: [
       { kind: 'pusher', at: 0.2, amp: 2.0, period: 2.4, phase: 0 },
@@ -60,12 +50,48 @@ const SEGMENTS = [
       { kind: 'pusher', at: 0.7, amp: 2.0, period: 2.7, phase: 4.1 },
     ],
   },
-  { type: 'turn', radius: 10, angle: -90, drop: 2, w: [4, 3], wall: 3, bank: 12 },
-  { type: 'turn', radius: 10, angle: 90, drop: 2, w: 3, wall: 3, bank: 12 },
-  { type: 'turn', radius: 10, angle: -90, drop: 2, w: 3, wall: 3, bank: 12 },
-  { zone: 'final', type: 'straight', len: 40, drop: 4, w: [3, 3.5], wall: 2.2 },
-  { zone: 'runout', type: 'straight', len: 20, drop: -1.2, w: [3.5, 5], wall: 2.2, finish: true, endCap: true },
+  { type: 'turn', radius: 12, angle: -90, drop: 3, w: 4, wall: 3, bank: 10 },
+  { type: 'straight', len: 8, drop: 1, w: [4, 6], wall: 2.2 },
+  {
+    // 4. peg field
+    zone: 'pegs', type: 'straight', len: 36, drop: 5.5, w: 6, wall: 2.2,
+    obstacles: [{ kind: 'pegs', from: 3, to: 33, rowGap: 4 }],
+  },
+  { type: 'straight', len: 8, drop: 1, w: [6, 3], wall: 2.2 },
+  // breather: the helix
+  { zone: 'helix', type: 'turn', radius: 9, angle: 720, drop: 22, w: 3, wall: 3.2, bank: 16 },
+  { type: 'straight', len: 10, drop: 1.2, w: [3, 4.5], wall: 2.2 },
+  {
+    // 5. walls sliding side to side, closing one side of the track at a time
+    zone: 'gates', type: 'straight', len: 36, drop: 6, w: 4.5, wall: 2.4,
+    obstacles: [
+      { kind: 'slider', at: 0.2, period: 2.4, phase: 0 },
+      { kind: 'slider', at: 0.5, period: 2.0, phase: 2.0 },
+      { kind: 'slider', at: 0.8, period: 2.7, phase: 4.4 },
+    ],
+  },
+  { type: 'turn', radius: 11, angle: 90, drop: 2.5, w: [4.5, 5], wall: 3, bank: 12 },
+  {
+    // 6. spinning blades
+    zone: 'spinners', type: 'straight', len: 50, drop: 8.5, w: 5, wall: 2.2,
+    obstacles: [
+      { kind: 'spinner', at: 0.17, arms: 2, len: 3.2, omega: 1.4, phase: 0 },
+      { kind: 'spinner', at: 0.5, arms: 2, len: 3.2, omega: -1.1, phase: 0.6 },
+      { kind: 'spinner', at: 0.83, arms: 2, len: 3.2, omega: 1.7, phase: 1.3 },
+    ],
+  },
+  { type: 'straight', len: 8, drop: 1, w: [5, 3.5], wall: 2.2 },
+  { type: 'turn', radius: 10, angle: -90, drop: 2, w: 3.5, wall: 3, bank: 12 },
+  {
+    // 7. one last sliding wall before the line
+    zone: 'final', type: 'straight', len: 40, drop: 4, w: 3.5, wall: 2.2,
+    obstacles: [{ kind: 'slider', at: 0.6, period: 2.3, phase: 1.0 }],
+  },
+  // finish line, then a short lip that drops off into the bucket
+  { zone: 'finish', type: 'straight', len: 5, drop: 0.25, w: 3.5, wall: 2.2, finish: true, bucket: true },
 ];
+
+const BUCKET = { ahead: 6.5, depth: 9.5, radius: 6.2, height: 5, sides: 40 };
 
 // ---------------------------------------------------------------------------
 // small vector helpers (plain arrays; only used at build time)
@@ -175,7 +201,7 @@ function buildCourse() {
 
   // --- static triangles (9 doubles each) ---
   const tris = [];
-  const triKind = []; // 0 floor, 1 wall, 2 cap
+  const triKind = []; // 0 floor, 1 wall, 2 cap, 3 bucket
   const pushTri = (a, b, c, kind) => {
     tris.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
     triKind.push(kind);
@@ -199,6 +225,32 @@ function buildCourse() {
     if (seg.endCap) addCap(seg.end);
   }
 
+  // --- finish bucket: an open-topped cylinder below the end of the track ---
+  let bucket = null;
+  const lastSeg = segInfo[segInfo.length - 1];
+  if (lastSeg.bucket) {
+    const j = lastSeg.end;
+    const fwd = norm([cl.T[j][0], 0, cl.T[j][2]]);
+    const c = [P[j][0] + fwd[0] * BUCKET.ahead, P[j][1] - BUCKET.depth, P[j][2] + fwd[2] * BUCKET.ahead];
+    const { radius: br, height: bh, sides } = BUCKET;
+    const ring = (y) => {
+      const pts = [];
+      for (let k = 0; k < sides; k++) {
+        const a = (TWO_PI * k) / sides;
+        pts.push([c[0] + dcos(a) * br, c[1] + y, c[2] + dsin(a) * br]);
+      }
+      return pts;
+    };
+    const lo = ring(0), hi = ring(bh);
+    for (let k = 0; k < sides; k++) {
+      const k2 = (k + 1) % sides;
+      pushTri(lo[k], hi[k], hi[k2], 3);
+      pushTri(lo[k], hi[k2], lo[k2], 3);
+      pushTri(c, lo[k2], lo[k], 3);
+    }
+    bucket = { c, r: br, h: bh, sides };
+  }
+
   // --- obstacles ---
   const staticCapsules = []; // {a:[3], b:[3], r}
   const obstacles = []; // kinematic
@@ -220,6 +272,22 @@ function buildCourse() {
             staticCapsules.push({ a: add(base, scale(f.u, -0.3)), b: add(base, scale(f.u, 1.6)), r: 0.35, deco: 'peg' });
           }
         }
+      } else if (o.kind === 'bumpers') {
+        for (const [at, lat] of o.at) {
+          const f = frameAt(seg, at);
+          const base = add(f.p, scale(f.r, lat));
+          staticCapsules.push({ a: add(base, scale(f.u, -0.3)), b: add(base, scale(f.u, 1.3)), r: 0.9, deco: 'bumper', kick: 6 });
+        }
+      } else if (o.kind === 'slider') {
+        // a wall spanning ~40% of the track that slides until it nearly
+        // touches one side wall, then the other
+        const f = frameAt(seg, o.at);
+        const half = f.hw * 0.4;
+        obstacles.push({
+          kind: 'slider', c: add(f.p, scale(f.u, 0.75)), r: f.r, u: f.u, n: cross(f.r, f.u),
+          half, amp: f.hw - 0.05 - half, hh: 0.85, ht: 0.25,
+          omega: TWO_PI / o.period, phase: o.phase, frame: f,
+        });
       } else if (o.kind === 'spinner') {
         const f = frameAt(seg, o.at);
         const c = add(f.p, scale(f.u, 0.55));
@@ -238,7 +306,24 @@ function buildCourse() {
           kind: 'pendulum', pivot, r: f.r, u: f.u, L, bobR: 0.9, amp: o.amp,
           omega: TWO_PI / o.period, phase: o.phase, frame: f,
         });
-      } else if (o.kind === 'pusher') {
+      } else if (o.kind === 'slider') {
+      const arg = o.omega * t + o.phase;
+      const off = o.amp * dsin(arg);
+      const vel = o.amp * o.omega * dcos(arg);
+      const q = parts[pi++];
+      q.shape = 2; q.collide = true; q.rad = 0;
+      q.x0 = q.x1 = o.c[0] + o.r[0] * off;
+      q.y0 = q.y1 = o.c[1] + o.r[1] * off;
+      q.z0 = q.z1 = o.c[2] + o.r[2] * off;
+      q.a1x = o.r[0]; q.a1y = o.r[1]; q.a1z = o.r[2];
+      q.a2x = o.u[0]; q.a2y = o.u[1]; q.a2z = o.u[2];
+      q.a3x = o.n[0]; q.a3y = o.n[1]; q.a3z = o.n[2];
+      q.h1 = o.half; q.h2 = o.hh; q.h3 = o.ht;
+      q.vx = o.r[0] * vel; q.vy = o.r[1] * vel; q.vz = o.r[2] * vel;
+      q.wx = q.wy = q.wz = 0; q.ox = q.oy = q.oz = 0;
+      q.bx = q.x0; q.by = q.y0; q.bz = q.z0;
+      q.br = Math.sqrt(o.half * o.half + o.hh * o.hh + o.ht * o.ht);
+    } else if (o.kind === 'pusher') {
         const f = frameAt(seg, o.at);
         obstacles.push({
           kind: 'pusher', c: add(f.p, scale(f.u, 0.5)), r: f.r, t: f.t, half: 1.5, rad: 0.45, amp: o.amp,
@@ -311,6 +396,7 @@ function buildCourse() {
     minY = Math.min(minY, p[1]);
     maxY = Math.max(maxY, p[1]);
   }
+  if (bucket) minY = Math.min(minY, bucket.c[1]);
 
   return {
     version: COURSE_VERSION,
@@ -322,6 +408,7 @@ function buildCourse() {
     profiles,
     tris: Float64Array.from(tris), triN, triKind: Uint8Array.from(triKind), triCount,
     caps,
+    bucket,
     staticCapsules,
     obstacles,
     partCount,
@@ -329,6 +416,7 @@ function buildCourse() {
     spawn: { j0: startSeg.start + 3, j1: startSeg.start + 15, hMin: 1.5, hMax: 7 },
     finishIndex: finishSeg.start,
     finishS: cl.S[finishSeg.start],
+    finishY: P[finishSeg.start][1],
     totalS: cl.S[nS - 1],
     minY, maxY,
   };
@@ -353,6 +441,8 @@ export function createPartBuffer(course) {
       vx: 0, vy: 0, vz: 0, // linear velocity
       wx: 0, wy: 0, wz: 0, ox: 0, oy: 0, oz: 0, // angular velocity about origin
       bx: 0, by: 0, bz: 0, br: 0, // bounding sphere
+      // box (shape 2): centre is (x0,y0,z0), axes a1..a3, half extents h1..h3
+      a1x: 0, a1y: 0, a1z: 0, a2x: 0, a2y: 0, a2z: 0, a3x: 0, a3y: 0, a3z: 0, h1: 0, h2: 0, h3: 0,
     });
   }
   return parts;
@@ -411,6 +501,23 @@ export function evaluateObstacles(course, t, parts) {
       rod.x1 = bx; rod.y1 = by; rod.z1 = bz;
       rod.vx = rod.vy = rod.vz = 0; rod.wx = rod.wy = rod.wz = 0;
       setBound(rod);
+    } else if (o.kind === 'slider') {
+      const arg = o.omega * t + o.phase;
+      const off = o.amp * dsin(arg);
+      const vel = o.amp * o.omega * dcos(arg);
+      const q = parts[pi++];
+      q.shape = 2; q.collide = true; q.rad = 0;
+      q.x0 = q.x1 = o.c[0] + o.r[0] * off;
+      q.y0 = q.y1 = o.c[1] + o.r[1] * off;
+      q.z0 = q.z1 = o.c[2] + o.r[2] * off;
+      q.a1x = o.r[0]; q.a1y = o.r[1]; q.a1z = o.r[2];
+      q.a2x = o.u[0]; q.a2y = o.u[1]; q.a2z = o.u[2];
+      q.a3x = o.n[0]; q.a3y = o.n[1]; q.a3z = o.n[2];
+      q.h1 = o.half; q.h2 = o.hh; q.h3 = o.ht;
+      q.vx = o.r[0] * vel; q.vy = o.r[1] * vel; q.vz = o.r[2] * vel;
+      q.wx = q.wy = q.wz = 0; q.ox = q.oy = q.oz = 0;
+      q.bx = q.x0; q.by = q.y0; q.bz = q.z0;
+      q.br = Math.sqrt(o.half * o.half + o.hh * o.hh + o.ht * o.ht);
     } else if (o.kind === 'pusher') {
       const arg = o.omega * t + o.phase;
       const off = o.amp * dsin(arg);

@@ -28,6 +28,16 @@ console.log(`course: ${c.sampleCount} samples, ${c.triCount} tris, length ${c.to
   }
   if (clashes) fail(`course overlaps itself at ${clashes} sample pairs`);
 }
+if (c.bucket) {
+  // nothing but the final lip may come near the finish bucket
+  const b = c.bucket;
+  let near = 0;
+  for (let j = 0; j < c.finishIndex - 10; j++) {
+    const dx = c.P[j * 3] - b.c[0], dz = c.P[j * 3 + 2] - b.c[2], y = c.P[j * 3 + 1];
+    if (Math.hypot(dx, dz) < b.r + c.HW[j] + 2 && y > b.c[1] - 4 && y < b.c[1] + b.h + 10) near++;
+  }
+  if (near) fail(`course passes through/near the finish bucket at ${near} samples`);
+}
 
 // --- races ------------------------------------------------------------------
 const names = Array.from({ length: marbles }, (_, i) => `M${i + 1}`);
@@ -46,6 +56,7 @@ for (let r = 0; r < races; r++) {
       `dnf ${dnf}, respawns ${resp}, sim ${(ms / 1000).toFixed(2)}s (${((race.stepCount * DT) / (ms / 1000)).toFixed(0)}x realtime)`
   );
   if (dnf) fail(`${seed}: ${dnf} marbles did not finish`);
+  if (race.bucketRescues) console.log(`  ${race.bucketRescues} marble(s) bounced out of the bucket`);
 
   // determinism: same seed again must match exactly
   if (r < 2) {

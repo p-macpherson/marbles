@@ -5,11 +5,21 @@ A deterministic 3D physics marble race built with [three.js](https://threejs.org
 - Choose how many marbles (2–32) and name each one.
 - Marbles drop from randomised positions in the start zone (decided by the **seed**),
   then race down a course with banked turns, a helix, spinning blades, pendulums,
-  a peg field and sliding pushers.
-- Names float above each marble. Follow any marble, cycle through them, follow the
-  leader automatically, or switch to a free orbit camera.
+  a peg field, sliding pushers, pinball bumpers and walls that slide side to side.
+  After the finish line the track drops off into a bucket, so finished marbles are
+  out of the way (they also stop colliding with marbles still racing).
+- Names float above each marble. Follow any marble, cycle through them, or follow
+  the leader automatically. The camera keeps a fixed elevation and follows the track
+  direction; drag/swipe to swing it around, scroll/pinch to zoom, double-click or
+  "Reset view" to recentre.
 - Every race has a **share link**. Anyone who opens it watches the identical race as a
   replay (no setup screen), and is first asked which marble to follow.
+- Original comedy-chase ragtime music, synthesised live with the Web Audio API
+  (`src/audio/music.js`, no audio files), plus countdown beeps. Mute with the 🔊
+  button or the M key; the choice is remembered.
+- When the race ends the music stops, and 6 seconds after the results appear the
+  page redirects to a YouTube video (cancelled if you choose replay, new race or
+  back to track first).
 - Works on phones: responsive HUD, touch controls, portrait-friendly camera.
 
 ## Running locally

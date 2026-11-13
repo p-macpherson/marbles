@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#1b2a3a" />
+    <title>Marble Race</title>
+    <meta name="description" content="A deterministic 3D physics marble race. Name your marbles, race them, share the replay." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='44' fill='%235aa9e6'/%3E%3Cpath d='M12 55 Q50 25 88 50' stroke='white' stroke-width='9' fill='none'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="css/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="labels"></div>
+
+    <!-- HUD -->
+    <div id="hud" hidden>
+      <div class="hud-top">
+        <div class="pill clock">
+          <span id="mode-badge" class="badge">LIVE</span>
+          <span id="clock">0:00.0</span>
+        </div>
+        <div class="hud-actions">
+          <button id="btn-results" class="pill btn accent" type="button" hidden>Results</button>
+          <button id="btn-speed" class="pill btn" type="button" title="Playback speed">1×</button>
+          <button id="btn-share" class="pill btn" type="button" title="Share this race">Share</button>
+          <button id="btn-standings" class="pill btn" type="button" title="Standings" aria-expanded="false">Standings</button>
+        </div>
+      </div>
+      <ol id="standings" class="panel"></ol>
+      <div class="camera-bar">
+        <button id="cam-prev" class="pill btn icon" type="button" aria-label="Previous marble">‹</button>
+        <button id="cam-name" class="pill btn cam-name" type="button" title="Choose marble to follow"></button>
+        <button id="cam-next" class="pill btn icon" type="button" aria-label="Next marble">›</button>
+        <button id="cam-leader" class="pill btn toggle" type="button" title="Follow whoever is leading (L)">🏆<span class="long"> Leader</span></button>
+        <button id="cam-view" class="pill btn" type="button" title="Switch camera style (C)">🎥<span class="long"> Chase cam</span></button>
+      </div>
+    </div>
+
+    <div id="countdown" hidden></div>
+    <div id="toast" hidden></div>
+
+    <!-- Setup (race creator only) -->
+    <section id="setup" class="overlay" hidden>
+      <div class="card setup-card">
+        <h1><span class="logo"></span> Marble Race</h1>
+        <p class="sub">Name your marbles, drop them in, and share the replay. Same seed, same race — every time.</p>
+
+        <div class="row two">
+          <label class="field">
+            <span>Seed</span>
+            <div class="input-group">
+              <input id="seed" type="text" maxlength="24" autocomplete="off" spellcheck="false" />
+              <button id="seed-random" class="btn ghost icon" type="button" title="Random seed" aria-label="Random seed">🎲</button>
+            </div>
+          </label>
+          <label class="field">
+            <span>Marbles</span>
+            <div class="input-group stepper">
+              <button id="count-dec" class="btn ghost icon" type="button" aria-label="Fewer marbles">−</button>
+              <input id="count" type="number" inputmode="numeric" />
+              <button id="count-inc" class="btn ghost icon" type="button" aria-label="More marbles">+</button>
+            </div>
+          </label>
+        </div>
+
+        <div class="names-head">
+          <span>Names</span>
+          <button id="names-random" class="btn ghost small" type="button">Fill with random names</button>
+        </div>
+        <div id="names" class="names"></div>
+
+        <button id="start" class="btn primary big" type="button">Start race</button>
+      </div>
+    </section>
+
+    <!-- Viewer: choose who to follow -->
+    <section id="pick" class="overlay" hidden>
+      <div class="card">
+        <h2>Who are you cheering for?</h2>
+        <p class="sub">Pick a marble for the camera to follow. You can switch any time during the race.</p>
+        <div id="pick-list" class="pick-list"></div>
+      </div>
+    </section>
+
+    <!-- Results -->
+    <section id="results" class="overlay" hidden>
+      <div class="card results-card">
+        <h2>Results</h2>
+        <div id="podium" class="podium"></div>
+        <ol id="results-list" class="results-list"></ol>
+        <div class="actions">
+          <button id="res-replay" class="btn" type="button">Watch replay</button>
+          <button id="res-share" class="btn" type="button">Share link</button>
+          <button id="res-new" class="btn primary" type="button">New race</button>
+          <button id="res-close" class="btn ghost" type="button">Back to track</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Share dialog -->
+    <section id="share" class="overlay" hidden>
+      <div class="card">
+        <h2>Share this race</h2>
+        <p class="sub">Anyone with this link watches the exact same race as a replay.</p>
+        <div class="input-group">
+          <input id="share-url" type="text" readonly />
+          <button id="share-copy" class="btn primary" type="button">Copy</button>
+        </div>
+        <div class="actions">
+          <button id="share-native" class="btn" type="button" hidden>Share…</button>
+          <button id="share-close" class="btn ghost" type="button">Close</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Error -->
+    <section id="error" class="overlay" hidden>
+      <div class="card">
+        <h2>Can't load this race</h2>
+        <p id="error-msg" class="sub"></p>
+      </div>
+    </section>
+
+    <noscript><p class="noscript">This race needs JavaScript and WebGL.</p></noscript>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>

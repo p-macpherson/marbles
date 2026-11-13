@@ -1,0 +1,11 @@
+{
+  "name": "marble-race",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic 3D physics marble race (three.js)",
+  "scripts": {
+    "test": "node tools/simtest.mjs",
+    "serve": "python -m http.server 8080"
+  }
+}
